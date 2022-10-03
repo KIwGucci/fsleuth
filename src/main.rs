@@ -9,7 +9,6 @@ use std::{
 };
 
 fn main() -> Result<()> {
-    execute!(stdout(), terminal::EnterAlternateScreen)?;
 
     let mut my_readline = Editor::<()>::new()?;
 
@@ -20,7 +19,7 @@ fn main() -> Result<()> {
     loop {
 
         let readline = my_readline.readline("extension >>");
-
+        clearscreen()?;
         match readline {
             Ok(rline) => {
                 app.extention = rline;
@@ -54,7 +53,7 @@ fn main() -> Result<()> {
 
         let in_token: String;
         let readline = my_readline.readline(format!("ext:{} =>>", app.extention).as_str());
-
+        clearscreen()?;
         match readline {
             Ok(rline) => in_token = rline.trim().to_string(),
             Err(e) => {
@@ -159,11 +158,9 @@ fn main() -> Result<()> {
         } else {
             writeln!(output_buffer, "some thing wrong")?;
         }
-        clearscreen()?;
         output_buffer.flush()?;
     }
 
-    execute!(stdout(), terminal::LeaveAlternateScreen)?;
     Ok(())
 }
 
@@ -187,6 +184,6 @@ impl FileFinder {
 }
 
 fn clearscreen() -> Result<()> {
-    execute!(stdout(), terminal::Clear(terminal::ClearType::Purge))?;
+    execute!(stdout(), terminal::Clear(terminal::ClearType::All))?;
     Ok(())
 }
