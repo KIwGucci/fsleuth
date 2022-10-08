@@ -1,7 +1,6 @@
 mod filefinder;
 use anyhow::{bail, Result};
 use crossterm::{execute, terminal};
-use globmatch::IterAll;
 use rustyline::Editor;
 use std::{
     io::{stdout, BufWriter, Write},
@@ -9,157 +8,17 @@ use std::{
 };
 
 fn main() -> Result<()> {
-
     let mut my_readline = Editor::<()>::new()?;
+
+    execute!(stdout(), terminal::Clear(terminal::ClearType::All))?;
 
     println!("File Finder.\nInput help to see func");
     let mut app = FileFinder::new();
-    let mut output_buffer = BufWriter::new(stdout());
+    app.set_extension(&mut my_readline)?;
 
-    loop {
+    execute!(stdout(), terminal::Clear(terminal::ClearType::All))?;
 
-        let readline = my_readline.readline("extension >>");
-        clearscreen()?;
-        match readline {
-            Ok(rline) => {
-                app.extention = rline;
-                if app.extention == "" {
-                    writeln!(
-                        output_buffer,
-                        "please input search word... '*' is wildcard."
-                    )?;
-
-                    output_buffer.flush()?;
-                    continue;
-                }
-            }
-
-            Err(e) => {
-                bail!("{e}")
-            }
-        }
-        writeln!(output_buffer, "Extention:{}", app.extention)?;
-        output_buffer.flush()?;
-
-        break;
-    }
-
-    loop {
-        writeln!(
-            output_buffer,
-            "@ext << change extention, @open << open file, @q or @quit << exit"
-        )?;
-        output_buffer.flush()?;
-
-        let in_token: String;
-        let readline = my_readline.readline(format!("ext:{} =>>", app.extention).as_str());
-        clearscreen()?;
-        match readline {
-            Ok(rline) => in_token = rline.trim().to_string(),
-            Err(e) => {
-                bail!("{e}")
-            }
-        }
-
-        match in_token.as_str() {
-            "@quit" | "@q" => break,
-            "@ext" | "@e" | "@ex" => {
-                let readline = my_readline.readline("extension >>");
-                match readline {
-                    Ok(rline) => app.extention = rline,
-                    Err(e) => {
-                        bail!("{e}");
-                    }
-                }
-                writeln!(output_buffer, "Extention:{}", app.extention)?;
-                output_buffer.flush()?;
-                continue;
-            }
-            "@open" | "@o" | "@op" => {
-                loop {
-                    let limitnum = 100;
-                    for (i, path) in app.stack_vec.iter().enumerate() {
-                        if i >= limitnum {
-                            writeln!(
-                                output_buffer,
-                                "There are more than {limitnum} applicable items"
-                            )?;
-                            break;
-                        } else {
-                            writeln!(output_buffer, "{}:{:?}", i, path)?;
-                        }
-                    }
-                    output_buffer.flush()?;
-                    let readline = my_readline.readline("select number >>");
-
-                    match readline {
-                        Ok(rline) => {
-                            if let "q" | "quit" | "@q" | "@quit" = rline.as_str() {
-                                break;
-                            } else {
-                                let num = rline.parse::<usize>();
-                                match num {
-                                    Ok(n) => {
-                                        if n < app.stack_vec.len() {
-                                            filefinder::opendir(&app.stack_vec[n])?;
-                                        } else {
-                                            println!("Wrong number.");
-                                        }
-                                    }
-                                    Err(e) => bail!("{e}"),
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            bail!("{e}");
-                        }
-                    }
-                }
-                continue;
-            }
-            _ => app.searchword = in_token.to_string(),
-        }
-
-        if let Some(items) = app.search() {
-            app.stack_vec = Vec::new();
-            // 該当項目のcounterとスタックする上限
-            let mut counter = 0;
-            let stack_limit = 100;
-
-            // 該当する項目のカウントと要素のスタック
-            for item in items.into_iter() {
-                let it = match item.to_owned() {
-                    Ok(fs) => fs,
-                    Err(e) => {
-                        bail!("{e}")
-                    }
-                };
-
-                if filefinder::andsearch(it, &app.searchword) {
-                    if app.stack_vec.len() < stack_limit {
-                        app.stack_vec.push(item.unwrap());
-                    }
-                    counter += 1;
-                }
-            }
-
-            // 表示する項目数の制限
-            let limitnum = app.stack_vec.len().min(stack_limit);
-
-            for it in app.stack_vec[..limitnum].iter() {
-                writeln!(output_buffer, "{:?}", it)?;
-            }
-
-            writeln!(
-                output_buffer,
-                "extention: {},word: {} => {} hits",
-                app.extention, app.searchword, counter
-            )?;
-        } else {
-            writeln!(output_buffer, "some thing wrong")?;
-        }
-        output_buffer.flush()?;
-    }
+    app.manage_token(&mut my_readline)?;
 
     Ok(())
 }
@@ -177,13 +36,146 @@ impl FileFinder {
             searchword: "".to_string(),
         }
     }
-    fn search(&self) -> Option<IterAll<PathBuf>> {
-        let result = filefinder::finder(".", &self.searchword, &self.extention);
-        Some(result)
-    }
-}
+    fn search(&mut self) -> Result<()> {
+        let mut output_buffer = BufWriter::new(stdout());
+        let items = filefinder::finder(".", &self.searchword, &self.extention);
+        self.stack_vec = Vec::new();
+        // 該当項目のcounterとスタックする上限
+        let mut counter = 0;
+        let stack_limit = 100;
 
-fn clearscreen() -> Result<()> {
-    execute!(stdout(), terminal::Clear(terminal::ClearType::All))?;
-    Ok(())
+        // 該当する項目のカウントと要素のスタック
+        for item in items.filter(|p| p.is_ok()).map(|p| p.unwrap()) {
+            if filefinder::andsearch(&item, &self.searchword) {
+                if self.stack_vec.len() < stack_limit {
+                    self.stack_vec.push(item);
+                }
+                counter += 1;
+            }
+        }
+
+        // 表示する項目数の制限
+        let limitnum = self.stack_vec.len().min(stack_limit);
+
+        for it in self.stack_vec[..limitnum].iter() {
+            writeln!(output_buffer, "{:?}", it)?;
+        }
+
+        writeln!(
+            output_buffer,
+            "extention: {},word: {} => {} hits",
+            self.extention, self.searchword, counter
+        )?;
+
+        output_buffer.flush()?;
+        Ok(())
+    }
+
+    fn set_extension(&mut self, my_readline: &mut Editor<()>) -> Result<()> {
+        loop {
+            match my_readline.readline("extension >>") {
+                Ok(rline) => {
+                    if rline == "" {
+                        println!("please input search word... '*' is wildcard.");
+                        continue;
+                    } else {
+                        self.extention = rline;
+                    }
+                }
+
+                Err(e) => {
+                    bail!("{e}")
+                }
+            }
+            println!("Extention:{}", self.extention);
+
+            break;
+        }
+        Ok(())
+    }
+
+    fn open_file(&mut self, my_readline: &mut Editor<()>) -> Result<()> {
+        let limitnum = 100;
+
+        loop {
+            execute!(stdout(), terminal::Clear(terminal::ClearType::All))?;
+            let mut output_buffer = BufWriter::new(stdout());
+            for (i, path) in self.stack_vec.iter().enumerate() {
+                if i >= limitnum {
+                    writeln!(
+                        output_buffer,
+                        "There are more than {limitnum} applicable items"
+                    )?;
+                    break;
+                }
+
+                writeln!(output_buffer, "{}:{:?}", i, path)?;
+            }
+
+            output_buffer.flush()?;
+
+            match my_readline.readline("select number >>") {
+                Ok(rline) => match rline.as_str() {
+                    "q" | "quit" | "@q" | "@quit" => {
+                        break;
+                    }
+
+                    _ => match rline.parse::<usize>() {
+                        Ok(n) if n < self.stack_vec.len() => {
+                            filefinder::opendir(&self.stack_vec[n])?;
+                        }
+                        Ok(_) => {
+                            println!("Wrong number.");
+                        }
+
+                        Err(e) => println!("{e}"),
+                    },
+                },
+
+                Err(e) => {
+                    bail!("{e}");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn manage_token(&mut self, my_readline: &mut Editor<()>) -> Result<()> {
+        loop {
+            let mut output_buffer = BufWriter::new(stdout());
+            writeln!(
+                output_buffer,
+                "@ext << change extention, @open << open file, @q or @quit << exit"
+            )?;
+            output_buffer.flush()?;
+
+            let in_token: String;
+            let readline = my_readline.readline(format!("ext:{} =>>", self.extention).as_str());
+
+            execute!(stdout(), terminal::Clear(terminal::ClearType::All))?;
+
+            match readline {
+                Ok(rline) => in_token = rline.trim().to_string(),
+                Err(e) => {
+                    bail!("{e}")
+                }
+            }
+
+            match in_token.as_str() {
+                "@quit" | "@q" => break,
+
+                "@ext" | "@e" | "@ex" => {
+                    self.set_extension(my_readline)?;
+                }
+                "@open" | "@o" | "@op" => {
+                    self.open_file(my_readline)?;
+                }
+                _ => {
+                    self.searchword = in_token.to_string();
+                    self.search()?;
+                }
+            }
+        }
+        Ok(())
+    }
 }

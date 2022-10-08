@@ -35,7 +35,7 @@ pub fn opendir(fpath: &PathBuf) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-pub fn andsearch(path: PathBuf, words: &str) -> bool {
+pub fn andsearch(path: &PathBuf, words: &str) -> bool {
     if !words.contains(" ") {
         return true;
     }
